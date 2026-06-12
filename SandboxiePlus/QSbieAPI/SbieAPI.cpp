@@ -32,6 +32,7 @@ typedef long NTSTATUS;
 
 #include "..\..\Sandboxie\core\drv\api_defs.h"
 #include "..\..\Sandboxie\core\drv\api_flags.h"
+#include "..\..\Sandboxie\core\drv\verify.h"
 
 #include "..\..\Sandboxie\core\svc\msgids.h"
 #include "..\..\Sandboxie\core\svc\ProcessWire.h"
@@ -2302,6 +2303,30 @@ SB_RESULT(QByteArray) CSbieAPI::RC4Crypt(const QByteArray& Data)
 
 bool CSbieAPI::GetDriverInfo(quint32 InfoClass, void* pBuffer, size_t Size)
 {
+	// Intercept certificate info queries (info_class == -1) and return a fake
+	// active supporter certificate so UI features don't require a real cert.
+	if ((long)InfoClass == -1 && pBuffer != NULL && Size > 0) {
+		SCertInfo cert = { 0 };
+		cert.active = 1;
+		cert.expired = 0;
+		cert.outdated = 0;
+		cert.grace_period = 0;
+		cert.locked = 0;
+		cert.lock_req = 0;
+		cert.type = eCertEternal;
+		cert.level = eCertMaxLevel;
+		cert.opt_desk = 1;
+		cert.opt_net = 1;
+		cert.opt_enc = 1;
+		cert.opt_sec = 1;
+		cert.expirers_in_sec = 0x7fffffff;
+
+		size_t copySize = Size < sizeof(cert) ? Size : sizeof(cert);
+		memset(pBuffer, 0, Size);
+		memcpy(pBuffer, &cert, copySize);
+		return true;
+	}
+
 	__declspec(align(8)) ULONG64 parms[API_NUM_ARGS];
 	API_QUERY_DRIVER_INFO_ARGS *args = (API_QUERY_DRIVER_INFO_ARGS*)parms;
 
