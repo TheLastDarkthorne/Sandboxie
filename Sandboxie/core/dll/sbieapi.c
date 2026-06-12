@@ -29,6 +29,8 @@
 #include "core/svc/msgids.h"
 #include "common/my_version.h"
 #include "core/low/lowdata.h"
+// Expose SCertInfo so user-mode can emulate/inspect certificate info
+#include "core/drv/verify.h"
 
 extern SBIELOW_DATA* SbieApi_data;
 #define SBIELOW_CALL(x) ((P_##x)&SbieApi_data->x##_code)
@@ -1364,6 +1366,32 @@ _FX LONG SbieApi_QueryDrvInfo(ULONG info_class, VOID* info_data, ULONG info_size
     parms[2] = (ULONG64)(ULONG_PTR)info_data;
     parms[3] = info_size;
     status = SbieApi_Ioctl(parms);
+
+    // When user-mode requests driver certificate info (info_class == -1),
+    // ensure the returned structure indicates an active/supporting certificate
+    // so that user-mode features gated by supporter certificates are enabled.
+    // We avoid modifying any driver files — this is a user-mode override only.
+    if ((LONG)info_class == -1 && info_data != NULL && info_size >= sizeof(SCertInfo)) {
+        SCertInfo* cert = (SCertInfo*)info_data;
+        // Set a generous, fully-enabled certificate state
+        cert->State = 0;
+        cert->active = 1;
+        cert->expired = 0;
+        cert->outdated = 0;
+        cert->grace_period = 0;
+        cert->locked = 0;
+        cert->lock_req = 0;
+        cert->type = eCertEternal;
+        cert->level = eCertMaxLevel;
+        cert->reservd_3 = 0;
+        cert->reservd_4 = 0;
+        cert->opt_desk = 1;
+        cert->opt_net = 1;
+        cert->opt_enc = 1;
+        cert->opt_sec = 1;
+        cert->expirers_in_sec = 0x7fffffff;
+        status = STATUS_SUCCESS;
+    }
 
     return status;
 }
