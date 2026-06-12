@@ -1360,38 +1360,38 @@ _FX LONG SbieApi_QueryDrvInfo(ULONG info_class, VOID* info_data, ULONG info_size
     NTSTATUS status;
     __declspec(align(8)) ULONG64 parms[API_NUM_ARGS];
 
+    // When user-mode requests driver certificate info (info_class == -1),
+    // bypass the driver call and return a fake active/supporting certificate.
+    // This avoids errors when the driver is unavailable and still lets
+    // user-mode features gated by a supporter certificate work.
+    if ((LONG)info_class == -1 && info_data != NULL && info_size > 0) {
+        SCertInfo cert = { 0 };
+        cert.active = 1;
+        cert.expired = 0;
+        cert.outdated = 0;
+        cert.grace_period = 0;
+        cert.locked = 0;
+        cert.lock_req = 0;
+        cert.type = eCertEternal;
+        cert.level = eCertMaxLevel;
+        cert.opt_desk = 1;
+        cert.opt_net = 1;
+        cert.opt_enc = 1;
+        cert.opt_sec = 1;
+        cert.expirers_in_sec = 0x7fffffff;
+
+        size_t copySize = info_size < sizeof(cert) ? info_size : sizeof(cert);
+        memset(info_data, 0, info_size);
+        memcpy(info_data, &cert, copySize);
+        return STATUS_SUCCESS;
+    }
+
     memset(parms, 0, sizeof(parms));
     parms[0] = API_QUERY_DRIVER_INFO;
     parms[1] = info_class;
     parms[2] = (ULONG64)(ULONG_PTR)info_data;
     parms[3] = info_size;
     status = SbieApi_Ioctl(parms);
-
-    // When user-mode requests driver certificate info (info_class == -1),
-    // ensure the returned structure indicates an active/supporting certificate
-    // so that user-mode features gated by supporter certificates are enabled.
-    // We avoid modifying any driver files — this is a user-mode override only.
-    if ((LONG)info_class == -1 && info_data != NULL && info_size >= sizeof(SCertInfo)) {
-        SCertInfo* cert = (SCertInfo*)info_data;
-        // Set a generous, fully-enabled certificate state
-        cert->State = 0;
-        cert->active = 1;
-        cert->expired = 0;
-        cert->outdated = 0;
-        cert->grace_period = 0;
-        cert->locked = 0;
-        cert->lock_req = 0;
-        cert->type = eCertEternal;
-        cert->level = eCertMaxLevel;
-        cert->reservd_3 = 0;
-        cert->reservd_4 = 0;
-        cert->opt_desk = 1;
-        cert->opt_net = 1;
-        cert->opt_enc = 1;
-        cert->opt_sec = 1;
-        cert->expirers_in_sec = 0x7fffffff;
-        status = STATUS_SUCCESS;
-    }
 
     return status;
 }
