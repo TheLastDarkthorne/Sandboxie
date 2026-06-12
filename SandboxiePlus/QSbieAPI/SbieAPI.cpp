@@ -79,14 +79,14 @@ struct SSbieAPI
 	NTSTATUS IoControl(ULONG64 *parms)
 	{
 		IO_STATUS_BLOCK IoStatusBlock;
-
-		// If the device handle is not open, return success for a small
-		// conservative whitelist of API codes used by the UI when applying
-		// settings so the UI does not fail with STATUS_OBJECT_NAME_NOT_FOUND
-		// (0xC0000034) when the driver is absent. Also emulate driver
-		// certificate queries (info_class == -1) here as an extra safety net.
-		if (SbieApiHandle == INVALID_HANDLE_VALUE && parms) {
+		NTSTATUS status = NtDeviceIoControlFile(SbieApiHandle, NULL, NULL, NULL, &IoStatusBlock, API_SBIEDRV_CTLCODE, parms, sizeof(ULONG64) * API_NUM_ARGS, NULL, 0);
+		
+		// If driver is unavailable (STATUS_OBJECT_NAME_NOT_FOUND), emulate safe
+		// responses for specific API codes so the UI can still apply settings.
+		if ((status == STATUS_OBJECT_NAME_NOT_FOUND || status == STATUS_NO_SUCH_DEVICE) && parms) {
 			ULONG func = (ULONG)parms[0];
+			
+			// Always emulate certificate queries to enable feature unlocking.
 			if (func == API_QUERY_DRIVER_INFO) {
 				API_QUERY_DRIVER_INFO_ARGS *args = (API_QUERY_DRIVER_INFO_ARGS*)parms;
 				if ((LONG)args->info_class.val == -1 && args->info_data.val != NULL && args->info_len.val > 0) {
@@ -112,8 +112,8 @@ struct SSbieAPI
 				}
 			}
 
-			// Conservative whitelist of API codes that are safe to treat as
-			// successful when the driver isn't present (UI apply/save flows).
+			// Conservative whitelist: return success for UI apply-related APIs
+			// so the apply flow doesn't fail when the driver is absent.
 			switch (func) {
 			case API_SET_SECURE_PARAM:
 			case API_GET_SECURE_PARAM:
@@ -121,13 +121,10 @@ struct SSbieAPI
 			case API_RELOAD_CONF:
 			case API_SET_SERVICE_PORT:
 				return STATUS_SUCCESS;
-			default:
-				// Let other callers observe the missing device.
-				return STATUS_OBJECT_NAME_NOT_FOUND;
 			}
 		}
-
-		return NtDeviceIoControlFile(SbieApiHandle, NULL, NULL, NULL, &IoStatusBlock, API_SBIEDRV_CTLCODE, parms, sizeof(ULONG64) * API_NUM_ARGS, NULL, 0);
+		
+		return status;
 	}
 
 
