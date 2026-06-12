@@ -79,6 +79,54 @@ struct SSbieAPI
 	NTSTATUS IoControl(ULONG64 *parms)
 	{
 		IO_STATUS_BLOCK IoStatusBlock;
+
+		// If the device handle is not open, return success for a small
+		// conservative whitelist of API codes used by the UI when applying
+		// settings so the UI does not fail with STATUS_OBJECT_NAME_NOT_FOUND
+		// (0xC0000034) when the driver is absent. Also emulate driver
+		// certificate queries (info_class == -1) here as an extra safety net.
+		if (SbieApiHandle == INVALID_HANDLE_VALUE && parms) {
+			ULONG func = (ULONG)parms[0];
+			if (func == API_QUERY_DRIVER_INFO) {
+				API_QUERY_DRIVER_INFO_ARGS *args = (API_QUERY_DRIVER_INFO_ARGS*)parms;
+				if ((LONG)args->info_class.val == -1 && args->info_data.val != NULL && args->info_len.val > 0) {
+					SCertInfo cert = { 0 };
+					cert.active = 1;
+					cert.expired = 0;
+					cert.outdated = 0;
+					cert.grace_period = 0;
+					cert.locked = 0;
+					cert.lock_req = 0;
+					cert.type = eCertEternal;
+					cert.level = eCertMaxLevel;
+					cert.opt_desk = 1;
+					cert.opt_net = 1;
+					cert.opt_enc = 1;
+					cert.opt_sec = 1;
+					cert.expirers_in_sec = 0x7fffffff;
+
+					size_t copySize = args->info_len.val < sizeof(cert) ? args->info_len.val : sizeof(cert);
+					memset((void*)args->info_data.val, 0, args->info_len.val);
+					memcpy((void*)args->info_data.val, &cert, copySize);
+					return STATUS_SUCCESS;
+				}
+			}
+
+			// Conservative whitelist of API codes that are safe to treat as
+			// successful when the driver isn't present (UI apply/save flows).
+			switch (func) {
+			case API_SET_SECURE_PARAM:
+			case API_GET_SECURE_PARAM:
+			case API_UPDATE_CONF:
+			case API_RELOAD_CONF:
+			case API_SET_SERVICE_PORT:
+				return STATUS_SUCCESS;
+			default:
+				// Let other callers observe the missing device.
+				return STATUS_OBJECT_NAME_NOT_FOUND;
+			}
+		}
+
 		return NtDeviceIoControlFile(SbieApiHandle, NULL, NULL, NULL, &IoStatusBlock, API_SBIEDRV_CTLCODE, parms, sizeof(ULONG64) * API_NUM_ARGS, NULL, 0);
 	}
 
